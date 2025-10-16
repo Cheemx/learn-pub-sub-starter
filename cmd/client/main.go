@@ -25,7 +25,7 @@ func main() {
 		log.Fatalf("Error getting username: %v", err)
 	}
 
-	exchange := routing.ExchangePerilDirect
+	exchange := routing.ExchangePerilTopic
 	queueName := routing.PauseKey + "." + username
 	pause := routing.PauseKey
 	queueType := pubsub.Transient
@@ -35,7 +35,28 @@ func main() {
 		log.Fatalf("Error declaring and binding queue: %v", err)
 	}
 
+	_, _, err = pubsub.DeclareAndBind(amqpConn, exchange, "army_moves."+username, "army_moves.*", queueType)
+	if err != nil {
+		log.Fatalf("Error declaring and binding queue: %v", err)
+	}
+
 	gameState := gamelogic.NewGameState(username)
+	err = pubsub.SubscribeJSON(amqpConn, exchange, queueName, pause, queueType, handlerPause(gameState))
+	if err != nil {
+		log.Fatalf("Error declaring and binding queue: %v", err)
+	}
+
+	err = pubsub.SubscribeJSON(amqpConn, exchange, "army_moves."+username, "army_moves.*", queueType, handlerMove(gameState))
+	if err != nil {
+		log.Fatalf("Error declaring and binding move queue: %v", err)
+	}
+
+	pubCh, err := amqpConn.Channel()
+	if err != nil {
+		log.Printf("Error using spawn command: %v", err)
+	}
+	defer pubCh.Close()
+
 	for {
 		cmds := gamelogic.GetInput()
 
@@ -50,7 +71,11 @@ func main() {
 				log.Printf("Error using spawn command: %v", err)
 			}
 		case "move":
-			_, err := gameState.CommandMove(cmds)
+			mv, err := gameState.CommandMove(cmds)
+			if err != nil {
+				log.Printf("Error using spawn command: %v", err)
+			}
+			err = pubsub.PublishJSON(pubCh, exchange, "army_moves."+username, mv)
 			if err != nil {
 				log.Printf("Error using spawn command: %v", err)
 			}
